@@ -1,0 +1,135 @@
+Flight Price Analysis Pipeline – Documentation
+
+1. Pipeline Architecture and Execution Flow
+1.1 Overview
+This project implements an end-to-end batch analytics pipeline for analyzing Bangladesh flight price data. The pipeline is orchestrated using Apache Airflow, while ETL processing is handled using Python and Pandas.
+
+1.2 Architecture Components
+• Data Source: CSV file (/opt/data/Flight_Price_Dataset_of_Bangladesh.csv)
+• Orchestration: Airflow DAG (flight_price_analysis_dag.py)
+• Staging Storage: MySQL database (flight_staging), table flight_data_staging
+• Analytics Storage: PostgreSQL database (flight_analytics)
+  - Fact Table: flight_data
+  - KPI Tables:
+    - kpi_avg_fare_by_airline
+    - kpi_seasonal_variation
+    - kpi_popular_routes
+
+1.3 Execution Flow
+1. Log pipeline start
+2. Ingest CSV into MySQL staging
+3. Validate staging data quality
+4. Transform + compute KPIs + load to PostgreSQL
+5. Log pipeline completion
+
+Logical Flow:
+CSV → Ingestion.py → MySQL staging → Validation.py → transform_and_compute_kpis.py → PostgreSQL (fact + KPI tables)
+
+2. Description of Each Airflow DAG / Task
+DAG Name: flight_price_analysis
+• Schedule: @daily
+• Catchup: False
+• Retries: 2
+• Retry Delay: 5 minutes
+• Owner: data_team
+
+Task 0: log_pipeline_start
+• Type: PythonOperator
+• Function: log_start()
+• Logs pipeline start and execution date.
+
+Task 1: ingest_csv_to_mysql
+• Type: PythonOperator
+• Function: run_ingestion()
+• Runs Ingestion.py via subprocess.
+• Reads CSV, cleans data, loads to MySQL table flight_data_staging.
+
+Task 2: validate_data
+• Type: PythonOperator
+• Function: run_validation()
+• Runs Validation.py via subprocess.
+• Performs data quality checks on flight_data_staging.
+• Fails pipeline if quality score < 90%.
+
+Task 3: transform_and_compute_kpis
+• Type: PythonOperator
+• Function: run_transform_and_kpis()
+• Runs transform_and_compute_kpis.py via subprocess.
+• Loads cleaned fact table into PostgreSQL.
+• Computes and writes KPI tables.
+
+Task 4: log_pipeline_completion
+• Type: PythonOperator
+• Function: log_completion()
+• Logs pipeline completion summary.
+
+3. KPI Definitions and Computation Logic
+3.1 Data Preparation Rules
+Only valid records are processed for KPI computation:
+• airline, source, destination must be non-null
+• base_fare >= 0
+• total_fare >= 0
+
+3.2 Season and Peak Season Derivation
+The pipeline derives a season column using available date fields:
+• departure_date_and_time, booking_date, or departure_date
+If none exist, season defaults to 'Unknown'.
+
+Season classification:
+• April → Eid_ul_Fitr
+• June/July → Eid_ul_Adha_Summer
+• Dec 15 – Jan 15 → Winter_Holiday
+• Otherwise → Regular
+• Missing date → Unknown
+
+Peak season flag:
+is_peak_season = season NOT IN ['Regular', 'Unknown', 'Off-Peak']
+
+KPI 1: Average Fare by Airline (kpi_avg_fare_by_airline)
+Grouped by airline:
+• avg_base_fare = mean(base_fare)
+• avg_total_fare = mean(total_fare)
+• booking_count = count(airline)
+Adds calculated_at timestamp.
+
+KPI 2: Seasonal Fare Variation (kpi_seasonal_variation)
+Grouped by season and is_peak_season:
+• avg_fare = mean(total_fare)
+• booking_count = count(season)
+Computes peak vs non-peak fare variation percentage.
+
+KPI 3: Most Popular Routes (kpi_popular_routes)
+Grouped by source and destination:
+• booking_count = count(source)
+• avg_fare = mean(total_fare)
+Adds route_rank and calculated_at timestamp.
+
+4. Challenges Encountered and Resolutions
+Challenge 1: Dirty column names in CSV
+• Problem: Special characters, spaces, parentheses.
+• Resolution: clean_column_name() normalizes and removes parentheses content.
+
+Challenge 2: Non-numeric fare values
+• Problem: Currency symbols, text.
+• Resolution: Regex cleaning and pd.to_numeric(errors='coerce').
+
+Challenge 3: Missing or incorrect total_fare
+• Problem: total_fare missing or 0.
+• Resolution: total_fare recomputed as base_fare + tax_and_surcharge.
+
+Challenge 4: Invalid records affecting KPIs
+• Problem: Null keys, negative fares.
+• Resolution: Filtering rules applied before KPI computation.
+
+Challenge 5: Missing seasonality information
+• Problem: No seasonality column or missing date fields.
+• Resolution: Dynamic date selection or default 'Unknown'.
+
+Challenge 6: Data quality risks in staging
+• Problem: duplicates, nulls, inconsistencies.
+• Resolution: Validation script enforces required checks and quality score threshold.
+
+Challenge 7: Task reliability in Airflow
+• Problem: failures due to data/DB issues.
+• Resolution: retries enabled, fail-fast exceptions, logging, email on failure.
+
