@@ -1,5 +1,5 @@
 """
-Job 2: Validate data quality in MySQL staging (Pandas version)
+Job 2: Validate data quality in MySQL staging
 """
 import pandas as pd
 from sqlalchemy import create_engine

@@ -1,5 +1,5 @@
 """
-Job 1: Ingest CSV data and load to MySQL staging (Pandas version)
+Job 1: Ingest CSV data and load to MySQL staging 
 """
 import pandas as pd
 from sqlalchemy import create_engine
@@ -83,7 +83,7 @@ def ingest_csv_to_mysql(args):
     df.to_sql(
         name='flight_data_staging',
         con=engine,
-        if_exists='append',
+        if_exists='replace',
         index=False
     )
     
