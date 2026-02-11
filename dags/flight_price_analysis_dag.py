@@ -80,14 +80,14 @@ def run_validation(**context):
     
     return "Validation completed"
 
-def run_transform_and_kpis(**context):
-    """Run the transformation and KPI computation script"""
-    logging.info("Starting transformation and KPI computation...")
-    
+def run_transform_data(**context):
+    """Run transformation job (staging → fact table)"""
+    logging.info("Starting transformation job...")
+
     result = subprocess.run(
         [
             sys.executable,
-            '/opt/airflow/dags/jobs/transform_and_compute_kpis.py',
+            '/opt/airflow/dags/jobs/transform_data.py',
             '--mysql-host', 'mysql-staging',
             '--mysql-port', '3306',
             '--mysql-database', 'flight_staging',
@@ -102,13 +102,67 @@ def run_transform_and_kpis(**context):
         capture_output=True,
         text=True
     )
-    
+
     logging.info(result.stdout)
+
     if result.returncode != 0:
         logging.error(result.stderr)
         raise Exception(f"Transformation failed: {result.stderr}")
-    
+
     return "Transformation completed"
+
+def run_compute_kpis(**context):
+    """Run KPI computation job (fact table → KPI tables)"""
+    logging.info("Starting KPI computation job...")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            '/opt/airflow/dags/jobs/compute_kpis.py',
+            '--postgres-host', 'postgres-analytics',
+            '--postgres-port', '5432',
+            '--postgres-database', 'flight_analytics',
+            '--postgres-user', 'analytics',
+            '--postgres-password', 'analytics',
+        ],
+        capture_output=True,
+        text=True
+    )
+
+    logging.info(result.stdout)
+
+    if result.returncode != 0:
+        logging.error(result.stderr)
+        raise Exception(f"KPI computation failed: {result.stderr}")
+
+    return "KPI computation completed"
+
+
+def run_model_retraining(**context):
+    """Run model retraining script"""
+    logging.info("Starting model retraining...")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            '/opt/airflow/dags/jobs/retrain_model.py',
+            '--postgres-host', 'postgres-analytics',
+            '--postgres-port', '5432',
+            '--postgres-database', 'flight_analytics',
+            '--postgres-user', 'analytics',
+            '--postgres-password', 'analytics',
+        ],
+        capture_output=True,
+        text=True
+    )
+
+    logging.info(result.stdout)
+    if result.returncode != 0:
+        logging.error(result.stderr)
+        raise Exception(f"Model retraining failed: {result.stderr}")
+
+    return "Model retraining completed"
+
 
 def log_completion(**context):
     """Generate final pipeline summary"""
@@ -157,14 +211,29 @@ with DAG(
         provide_context=True,
     )
     
-    # Task 3: Transform and compute KPIs
+    # Task 3: Transform data and load to PostgreSQL
     transform_task = PythonOperator(
-        task_id='transform_and_compute_kpis',
-        python_callable=run_transform_and_kpis,
+        task_id='transform_data',
+        python_callable=run_transform_data,
         provide_context=True,
     )
-    
-    # Task 4: Log completion
+
+    # Task 4: Compute KPIs  
+    kpi_task = PythonOperator(
+        task_id='compute_kpis',
+        python_callable=run_compute_kpis,
+        provide_context=True,
+    )
+
+
+    # Task 4: Retrain model with new data
+    retrain_task = PythonOperator(
+        task_id='retrain_model',
+        python_callable=run_model_retraining,
+        provide_context=True,
+    )
+
+    # Task 5: Log completion
     complete_task = PythonOperator(
         task_id='log_pipeline_completion',
         python_callable=log_completion,
@@ -172,4 +241,5 @@ with DAG(
     )
     
     # Define task dependencies
-    start_task >> ingest_task >> validate_task >> transform_task >> complete_task
+    start_task >> ingest_task >> validate_task >> transform_task >> kpi_task >> retrain_task >> complete_task
+
